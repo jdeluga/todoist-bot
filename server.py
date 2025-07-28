@@ -6,7 +6,7 @@ import os
 
 app = FastAPI()
 
-# Włączamy CORS
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
@@ -22,20 +22,19 @@ if not API_TOKEN:
 
 api = TodoistAPI(API_TOKEN)
 
-# Obsługa preflight (OPTIONS) dla /add_task
+# Preflight dla /add_task
 @app.options("/add_task")
 async def options_add_task():
     return JSONResponse(content={"status": "ok"})
 
+# Dodawanie zadania
 @app.post("/add_task")
 async def add_task(request: Request):
-    """
-    Endpoint do dodawania zadań do Todoist.
-    """
     data = await request.json()
     content = data.get("content")
     due = data.get("due")
     priority = data.get("priority", 1)
+    project_id = data.get("project_id")
 
     if not content:
         return {"status": "error", "message": "Brak treści zadania"}
@@ -44,12 +43,23 @@ async def add_task(request: Request):
         task = api.add_task(
             content=content,
             due_string=due,
-            priority=priority
+            priority=priority,
+            project_id=project_id
         )
         return {"status": "success", "task": task.content}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+# Lista projektów
+@app.get("/projects")
+async def get_projects():
+    try:
+        projects = api.get_projects()
+        return [{"id": p.id, "name": p.name} for p in projects]
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# Root
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Todoist bot działa!"}
