@@ -4,7 +4,7 @@ import os
 
 app = FastAPI()
 
-# Pobieramy token z Environment Variables
+# Pobieramy token z Environment Variables (bezpiecznie)
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
