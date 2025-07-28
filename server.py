@@ -23,7 +23,7 @@ if not API_TOKEN:
     raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
 BASE_URL = "https://api.todoist.com/rest/v2"
 
-# Pobranie projektów (cache w pamięci)
+# Pobranie projektów
 async def fetch_projects():
     headers = {"Authorization": f"Bearer {API_TOKEN}"}
     async with httpx.AsyncClient() as client:
@@ -44,7 +44,7 @@ async def parse_task_command(text: str):
             break
 
     # Rozpoznaj priorytet
-    priority = 1  # domyślny
+    priority = 1
     priority_map = {"1": 1, "2": 2, "3": 3, "4": 4,
                     "pierwszy": 1, "drugi": 2, "trzeci": 3, "czwarty": 4}
     for word, val in priority_map.items():
@@ -63,12 +63,7 @@ async def parse_task_command(text: str):
     content = text.strip()
     return content, due, priority, project_id
 
-# Preflight
-@app.options("/add_task")
-async def options_add_task():
-    return JSONResponse(content={"status": "ok"})
-
-# Dodawanie zadania
+# Główny endpoint do dodawania
 @app.post("/add_task")
 async def add_task(request: Request):
     data = await request.json()
@@ -76,9 +71,7 @@ async def add_task(request: Request):
     if not text or text.strip() == "":
         return {"status": "error", "message": "Treść zadania jest wymagana"}
 
-    # Inteligentne parsowanie
     content, due, priority, project_id = await parse_task_command(text)
-
     payload = {"content": content, "priority": priority}
     if due:
         payload["due_string"] = due
@@ -99,14 +92,15 @@ async def add_task(request: Request):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-# Lista projektów
-@app.get("/projects")
-async def get_projects():
-    try:
-        return await fetch_projects()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+# Nowy endpoint dla ChatGPT (przyjmuje czysty tekst)
+@app.post("/from_chatgpt")
+async def from_chatgpt(request: Request):
+    data = await request.json()
+    text = data.get("command")
+    if not text or text.strip() == "":
+        return {"status": "error", "message": "Brak treści komendy"}
+    return await add_task(Request(scope=request.scope, receive=request.receive, send=request._send))
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "Todoist bot z inteligentnym parserem działa!"}
+    return {"status": "ok", "message": "Todoist bot z integracją ChatGPT działa!"}
