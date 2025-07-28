@@ -1,11 +1,27 @@
 from fastapi import FastAPI, Request
 from todoist_api_python.api import TodoistAPI
+import os
 
 app = FastAPI()
-api = TodoistAPI(4af0aac48f7c410c57c4e5f2c706df6b15ffa0af)
+
+# Pobieramy token z Environment Variables
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
+
+api = TodoistAPI(API_TOKEN)
 
 @app.post("/add_task")
 async def add_task(request: Request):
+    """
+    Endpoint do dodawania zadań do Todoist.
+    Oczekuje JSON:
+    {
+      "content": "treść zadania",
+      "due": "termin (np. 'piątek 10:00')",
+      "priority": 1-4
+    }
+    """
     data = await request.json()
     content = data.get("content")
     due = data.get("due")
