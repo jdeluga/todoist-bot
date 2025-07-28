@@ -1,36 +1,36 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from todoist_api_python.api import TodoistAPI
 import os
 
 app = FastAPI()
 
-# Włączamy CORS (zezwalamy na połączenia z przeglądarki)
+# Włączamy CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # w razie potrzeby można ograniczyć do konkretnych domen
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pobieramy token z Environment Variables
+# Pobieramy token
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
 
 api = TodoistAPI(API_TOKEN)
 
+# Obsługa preflight (OPTIONS) dla /add_task
+@app.options("/add_task")
+async def options_add_task():
+    return JSONResponse(content={"status": "ok"})
+
 @app.post("/add_task")
 async def add_task(request: Request):
     """
     Endpoint do dodawania zadań do Todoist.
-    Oczekuje JSON:
-    {
-      "content": "treść zadania",
-      "due": "termin (np. 'piątek 10:00')",
-      "priority": 1-4
-    }
     """
     data = await request.json()
     content = data.get("content")
