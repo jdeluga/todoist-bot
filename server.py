@@ -1,10 +1,20 @@
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from todoist_api_python.api import TodoistAPI
 import os
 
 app = FastAPI()
 
-# Pobieramy token z Environment Variables (bezpiecznie)
+# Włączamy CORS (zezwalamy na połączenia z przeglądarki)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # w razie potrzeby można ograniczyć do konkretnych domen
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pobieramy token z Environment Variables
 API_TOKEN = os.getenv("API_TOKEN")
 if not API_TOKEN:
     raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
