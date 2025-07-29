@@ -1,106 +1,85 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import os
 import httpx
-import re
+import os
 import dateparser
 
 app = FastAPI()
 
-# CORS
+# CORS - żeby Make mógł wysyłać
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Token i API URL
-API_TOKEN = os.getenv("API_TOKEN")
-if not API_TOKEN:
-    raise ValueError("Brak API_TOKEN! Ustaw go w Environment Variables na Render.")
-BASE_URL = "https://api.todoist.com/rest/v2"
+TODOIST_TOKEN = os.getenv("TODOIST_API_TOKEN")
 
-# Pobranie projektów
-async def fetch_projects():
-    headers = {"Authorization": f"Bearer {API_TOKEN}"}
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{BASE_URL}/projects", headers=headers)
-        r.raise_for_status()
-        return r.json()
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "Todoist bot działa!"}
 
-# Parser komend
-async def parse_task_command(text: str):
-    projects = await fetch_projects()
-    project_id = None
-
-    # Rozpoznaj projekt
-    for p in projects:
-        if p['name'].lower() in text.lower():
-            project_id = p['id']
-            text = re.sub(p['name'], '', text, flags=re.IGNORECASE)
-            break
-
-    # Rozpoznaj priorytet
-    priority = 1
-    priority_map = {"1": 1, "2": 2, "3": 3, "4": 4,
-                    "pierwszy": 1, "drugi": 2, "trzeci": 3, "czwarty": 4}
-    for word, val in priority_map.items():
-        if re.search(rf"\b{word}\b", text.lower()):
-            priority = val
-            text = re.sub(rf"\b{word}\b", '', text, flags=re.IGNORECASE)
-            break
-
-    # Rozpoznaj datę/godzinę
-    due = None
-    date_match = dateparser.parse(text, languages=['pl'])
-    if date_match:
-        due = date_match.strftime("%Y-%m-%d %H:%M")
-
-    # Treść zadania
-    content = text.strip()
-    return content, due, priority, project_id
-
-# Główny endpoint do dodawania
-@app.post("/add_task")
-async def add_task(request: Request):
-    data = await request.json()
-    text = data.get("content")
-    if not text or text.strip() == "":
-        return {"status": "error", "message": "Treść zadania jest wymagana"}
-
-    content, due, priority, project_id = await parse_task_command(text)
-    payload = {"content": content, "priority": priority}
-    if due:
-        payload["due_string"] = due
-    if project_id:
-        payload["project_id"] = project_id
-
-    headers = {"Authorization": f"Bearer {API_TOKEN}", "Content-Type": "application/json"}
-
-    async with httpx.AsyncClient() as client:
-        try:
-            print("== Wysyłam do Todoist:", payload)
-            r = await client.post(f"{BASE_URL}/tasks", json=payload, headers=headers)
-            print("== Odpowiedź Todoist:", r.status_code, r.text)
-            r.raise_for_status()
-            return {"status": "success", "task": r.json()}
-        except httpx.HTTPStatusError as e:
-            return {"status": "error", "message": f"{e.response.status_code} {e.response.text}"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-
-# Nowy endpoint dla ChatGPT (przyjmuje czysty tekst)
 @app.post("/from_chatgpt")
 async def from_chatgpt(request: Request):
     data = await request.json()
-    text = data.get("command")
-    if not text or text.strip() == "":
-        return {"status": "error", "message": "Brak treści komendy"}
-    return await add_task(Request(scope=request.scope, receive=request.receive, send=request._send))
+    command = data.get("command", "")
 
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Todoist bot z integracją ChatGPT działa!"}
+    if not command:
+        return {"status": "error", "message": "Brak komendy"}
+
+    # --- Parser ---
+    priority = 1
+    project = None
+    due = None
+
+    # Wyszukaj priorytet
+    import re
+    pri_match = re.search(r"priorytet\s*(\d+)", command, re.IGNORECASE)
+    if pri_match:
+        priority = max(1, min(4, int(pri_match.group(1))))
+        command = re.sub(r"priorytet\s*\d+", "", command, flags=re.IGNORECASE)
+
+    # Wyszukaj projekt
+    proj_match = re.search(r"projekt\s+(\w+)", command, re.IGNORECASE)
+    if proj_match:
+        project = proj_match.group(1).capitalize()
+        command = re.sub(r"projekt\s+\w+", "", command, flags=re.IGNORECASE)
+
+    # Wyszukaj termin
+    date_match = dateparser.parse(command, languages=['pl'])
+    if date_match:
+        due = date_match.strftime("%Y-%m-%d %H:%M")
+        # usuń datę z treści
+        # (opcjonalnie można zostawić – zostawiamy uproszczone)
+
+    content = command.strip()
+
+    # --- Wyślij do Todoist ---
+    todoist_payload = {
+        "content": content,
+        "priority": priority,
+    }
+    if due:
+        todoist_payload["due_string"] = due
+    if project:
+        # Pobierz ID projektu
+        async with httpx.AsyncClient() as client:
+            headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+            resp = await client.get("https://api.todoist.com/rest/v2/projects", headers=headers)
+            for p in resp.json():
+                if p["name"].lower() == project.lower():
+                    todoist_payload["project_id"] = p["id"]
+
+    async with httpx.AsyncClient() as client:
+        headers = {
+            "Authorization": f"Bearer {TODOIST_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        r = await client.post("https://api.todoist.com/rest/v2/tasks", json=todoist_payload, headers=headers)
+
+    if r.status_code == 200 or r.status_code == 204:
+        return {"status": "success", "task": content}
+    else:
+        return {"status": "error", "message": f"{r.status_code}: {r.text}"}
