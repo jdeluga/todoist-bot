@@ -4,6 +4,7 @@ import httpx
 import os
 import re
 import traceback
+import dateparser
 
 app = FastAPI()
 
@@ -28,7 +29,9 @@ def split_tasks(text: str):
 def parse_task(text: str):
     priority = 1
     project = None
+    due = None
 
+    # priorytet
     pri_match = re.search(r"priorytet\s*(\d+)", text, re.IGNORECASE)
     if pri_match:
         priority = max(1, min(4, int(pri_match.group(1))))
@@ -43,12 +46,22 @@ def parse_task(text: str):
         priority = 1
         text = text.replace("priorytet niski", "")
 
+    # projekt
     proj_match = re.search(r"projekt\s+([a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ0-9]+)", text, re.IGNORECASE)
     if proj_match:
         project = proj_match.group(1).capitalize()
         text = re.sub(r"projekt\s+[a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ0-9]+", "", text, flags=re.IGNORECASE)
 
-    return {"content": text.strip(), "priority": priority, "project": project}
+    # data (reszta tekstu)
+    date_match = dateparser.parse(
+        text,
+        languages=['pl'],
+        settings={'PREFER_DATES_FROM': 'future'}
+    )
+    if date_match:
+        due = date_match.strftime("%Y-%m-%dT%H:%M:%S")
+
+    return {"content": text.strip(), "priority": priority, "project": project, "due": due}
 
 async def ensure_project_id(client, project_name):
     try:
@@ -105,6 +118,8 @@ async def from_chatgpt(request: Request):
                     "content": parsed["content"],
                     "priority": parsed["priority"]
                 }
+                if parsed["due"]:
+                    payload["due_datetime"] = parsed["due"]
                 if parsed["project"]:
                     proj_id = await ensure_project_id(client, parsed["project"])
                     if proj_id:
@@ -125,6 +140,7 @@ async def from_chatgpt(request: Request):
                     results.append({
                         "task": parsed["content"],
                         "project": parsed["project"],
+                        "due": parsed["due"],
                         "priority": parsed["priority"],
                         "url": task_data.get("url", ""),
                         "status": "success"
