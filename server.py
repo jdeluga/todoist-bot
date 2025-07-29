@@ -81,10 +81,11 @@ def parse_task(text: str):
         project = proj_match.group(1).capitalize()
         text = re.sub(r"projekt\s+[a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ]+", "", text, flags=re.IGNORECASE)
 
+    # Poprawiony dateparser (bez RELATIVE_BASE)
     date_match = dateparser.parse(
         text,
         languages=['pl'],
-        settings={'PREFER_DATES_FROM': 'future', 'RELATIVE_BASE': None}
+        settings={'PREFER_DATES_FROM': 'future'}
     )
     if date_match:
         due = date_match.strftime("%Y-%m-%d %H:%M")
