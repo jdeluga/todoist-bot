@@ -29,7 +29,7 @@ def split_tasks(text: str):
 def parse_task(text: str):
     priority = 1
     project = None
-    due = None
+    due_string = None
 
     # priorytet
     pri_match = re.search(r"priorytet\s*(\d+)", text, re.IGNORECASE)
@@ -52,16 +52,12 @@ def parse_task(text: str):
         project = proj_match.group(1).capitalize()
         text = re.sub(r"projekt\s+[a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ0-9]+", "", text, flags=re.IGNORECASE)
 
-    # data (reszta tekstu)
-    date_match = dateparser.parse(
-        text,
-        languages=['pl'],
-        settings={'PREFER_DATES_FROM': 'future'}
-    )
+    # data – zostawiamy oryginalny tekst, bo Todoist sam go sparsuje
+    date_match = dateparser.parse(text, languages=['pl'], settings={'PREFER_DATES_FROM': 'future'})
     if date_match:
-        due = date_match.strftime("%Y-%m-%dT%H:%M:%S")
+        due_string = text.strip()  # cały tekst z datą przekazujemy do Todoist
 
-    return {"content": text.strip(), "priority": priority, "project": project, "due": due}
+    return {"content": text.strip(), "priority": priority, "project": project, "due_string": due_string}
 
 async def ensure_project_id(client, project_name):
     try:
@@ -118,8 +114,8 @@ async def from_chatgpt(request: Request):
                     "content": parsed["content"],
                     "priority": parsed["priority"]
                 }
-                if parsed["due"]:
-                    payload["due_datetime"] = parsed["due"]
+                if parsed["due_string"]:
+                    payload["due_string"] = parsed["due_string"]
                 if parsed["project"]:
                     proj_id = await ensure_project_id(client, parsed["project"])
                     if proj_id:
@@ -140,7 +136,7 @@ async def from_chatgpt(request: Request):
                     results.append({
                         "task": parsed["content"],
                         "project": parsed["project"],
-                        "due": parsed["due"],
+                        "due": parsed["due_string"],
                         "priority": parsed["priority"],
                         "url": task_data.get("url", ""),
                         "status": "success"
