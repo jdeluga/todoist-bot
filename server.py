@@ -33,7 +33,6 @@ async def from_chatgpt(request: Request):
         except:
             pass
     if not command:
-        # Obsługa GET z parametrem
         command = request.query_params.get("text")
 
     if not command:
@@ -51,17 +50,16 @@ async def from_chatgpt(request: Request):
         command = re.sub(r"priorytet\s*\d+", "", command, flags=re.IGNORECASE)
 
     # Wyszukaj projekt
-    proj_match = re.search(r"projekt\s+(\w+)", command, re.IGNORECASE)
+    proj_match = re.search(r"projekt\s+([a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ]+)", command, re.IGNORECASE)
     if proj_match:
         project = proj_match.group(1).capitalize()
-        command = re.sub(r"projekt\s+\w+", "", command, flags=re.IGNORECASE)
+        command = re.sub(r"projekt\s+[a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ]+", "", command, flags=re.IGNORECASE)
 
     # Wyszukaj datę
     date_match = dateparser.parse(command, languages=['pl'])
     if date_match:
         due = date_match.strftime("%Y-%m-%d %H:%M")
 
-    # Treść zadania (bez priorytetu, projektu i daty)
     content = command.strip()
 
     # --- Przygotowanie payloadu ---
@@ -72,15 +70,29 @@ async def from_chatgpt(request: Request):
     if due:
         todoist_payload["due_string"] = due
 
-    # Jeśli projekt podany - pobierz ID projektu
+    # --- Obsługa projektu (sprawdź czy istnieje, jak nie to utwórz) ---
     if project:
         async with httpx.AsyncClient() as client:
             headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
             resp = await client.get("https://api.todoist.com/rest/v2/projects", headers=headers)
             if resp.status_code == 200:
-                for p in resp.json():
+                project_list = resp.json()
+                found = False
+                for p in project_list:
                     if p["name"].lower() == project.lower():
                         todoist_payload["project_id"] = p["id"]
+                        found = True
+                        break
+                if not found:
+                    # Stwórz projekt
+                    new_proj = await client.post(
+                        "https://api.todoist.com/rest/v2/projects",
+                        headers=headers,
+                        json={"name": project}
+                    )
+                    if new_proj.status_code == 200:
+                        new_proj_data = new_proj.json()
+                        todoist_payload["project_id"] = new_proj_data["id"]
 
     # --- Wyślij do Todoist ---
     async with httpx.AsyncClient() as client:
@@ -90,7 +102,10 @@ async def from_chatgpt(request: Request):
         }
         r = await client.post("https://api.todoist.com/rest/v2/tasks", json=todoist_payload, headers=headers)
 
-    if r.status_code in [200, 204]:
-        return {"status": "success", "task": content}
-    else:
-        return {"status": "error", "message": f"{r.status_code}: {r.text}"}
+    # --- DEBUG: Zwróć pełną odpowiedź ---
+    return {
+        "status": "success" if r.status_code in [200, 204] else "error",
+        "request_sent": todoist_payload,
+        "todoist_response": r.text,
+        "http_status": r.status_code
+    }
