@@ -26,6 +26,8 @@ def split_tasks(text: str):
 
 def parse_task(text: str):
     priority = 1
+    project = None
+
     pri_match = re.search(r"priorytet\s*(\d+)", text, re.IGNORECASE)
     if pri_match:
         priority = max(1, min(4, int(pri_match.group(1))))
@@ -39,7 +41,31 @@ def parse_task(text: str):
     elif "priorytet niski" in text.lower():
         priority = 1
         text = text.replace("priorytet niski", "")
-    return {"content": text.strip(), "priority": priority}
+
+    proj_match = re.search(r"projekt\s+([a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ0-9]+)", text, re.IGNORECASE)
+    if proj_match:
+        project = proj_match.group(1).capitalize()
+        text = re.sub(r"projekt\s+[a-zA-ZąćęłńóśżźĄĆĘŁŃÓŚŻŹ0-9]+", "", text, flags=re.IGNORECASE)
+
+    return {"content": text.strip(), "priority": priority, "project": project}
+
+async def ensure_project_id(client, project_name):
+    headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+    resp = await client.get("https://api.todoist.com/rest/v2/projects", headers=headers)
+    if resp.status_code == 200:
+        project_list = resp.json()
+        for p in project_list:
+            if p["name"].lower() == project_name.lower():
+                return p["id"]
+        # Tworzymy nowy projekt
+        new_proj = await client.post(
+            "https://api.todoist.com/rest/v2/projects",
+            headers=headers,
+            json={"name": project_name}
+        )
+        if new_proj.status_code == 200:
+            return new_proj.json()["id"]
+    return None
 
 @app.post("/from_chatgpt")
 @app.get("/from_chatgpt")
@@ -67,6 +93,11 @@ async def from_chatgpt(request: Request):
                 "content": parsed["content"],
                 "priority": parsed["priority"]
             }
+            if parsed["project"]:
+                proj_id = await ensure_project_id(client, parsed["project"])
+                if proj_id:
+                    payload["project_id"] = proj_id
+
             headers = {
                 "Authorization": f"Bearer {TODOIST_TOKEN}",
                 "Content-Type": "application/json"
@@ -76,6 +107,7 @@ async def from_chatgpt(request: Request):
                 task_data = r.json()
                 results.append({
                     "task": parsed["content"],
+                    "project": parsed["project"],
                     "priority": parsed["priority"],
                     "url": task_data.get("url", ""),
                     "status": "success"
