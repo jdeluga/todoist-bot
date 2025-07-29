@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
 import re
+import traceback
 
 app = FastAPI()
 
@@ -50,73 +51,93 @@ def parse_task(text: str):
     return {"content": text.strip(), "priority": priority, "project": project}
 
 async def ensure_project_id(client, project_name):
-    headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
-    resp = await client.get("https://api.todoist.com/rest/v2/projects", headers=headers)
-    if resp.status_code == 200:
-        project_list = resp.json()
-        for p in project_list:
-            if p["name"].lower() == project_name.lower():
-                return p["id"]
-        # Tworzymy nowy projekt
-        new_proj = await client.post(
-            "https://api.todoist.com/rest/v2/projects",
-            headers=headers,
-            json={"name": project_name}
-        )
-        if new_proj.status_code == 200:
-            return new_proj.json()["id"]
+    try:
+        headers = {"Authorization": f"Bearer {TODOIST_TOKEN}"}
+        resp = await client.get("https://api.todoist.com/rest/v2/projects", headers=headers)
+        print("Projects list status:", resp.status_code)
+        if resp.status_code == 200:
+            project_list = resp.json()
+            for p in project_list:
+                if p["name"].lower() == project_name.lower():
+                    print(f"Project found: {p['name']} ({p['id']})")
+                    return p["id"]
+            print(f"Project '{project_name}' not found. Creating...")
+            new_proj = await client.post(
+                "https://api.todoist.com/rest/v2/projects",
+                headers=headers,
+                json={"name": project_name}
+            )
+            print("New project creation response:", new_proj.status_code, new_proj.text)
+            if new_proj.status_code == 200:
+                return new_proj.json()["id"]
+        else:
+            print("Error fetching projects:", resp.text)
+    except Exception as e:
+        print("Error in ensure_project_id:", e)
+        traceback.print_exc()
     return None
 
 @app.post("/from_chatgpt")
 @app.get("/from_chatgpt")
 async def from_chatgpt(request: Request):
-    command = None
-    if request.method == "POST":
-        try:
-            data = await request.json()
-            command = data.get("command")
-        except:
-            pass
-    if not command:
-        command = request.query_params.get("text")
-    if not command:
-        return {"status": "error", "message": "Brak komendy"}
+    try:
+        command = None
+        if request.method == "POST":
+            try:
+                data = await request.json()
+                command = data.get("command")
+            except:
+                pass
+        if not command:
+            command = request.query_params.get("text")
+        if not command:
+            return {"status": "error", "message": "Brak komendy"}
 
-    command = clean_command(command)
-    tasks_texts = split_tasks(command)
+        command = clean_command(command)
+        tasks_texts = split_tasks(command)
 
-    results = []
-    async with httpx.AsyncClient() as client:
-        for task_text in tasks_texts:
-            parsed = parse_task(task_text)
-            payload = {
-                "content": parsed["content"],
-                "priority": parsed["priority"]
-            }
-            if parsed["project"]:
-                proj_id = await ensure_project_id(client, parsed["project"])
-                if proj_id:
-                    payload["project_id"] = proj_id
+        results = []
+        async with httpx.AsyncClient() as client:
+            for task_text in tasks_texts:
+                parsed = parse_task(task_text)
+                print("Parsed task:", parsed)
+                payload = {
+                    "content": parsed["content"],
+                    "priority": parsed["priority"]
+                }
+                if parsed["project"]:
+                    proj_id = await ensure_project_id(client, parsed["project"])
+                    if proj_id:
+                        payload["project_id"] = proj_id
+                        print(f"Assigned to project ID: {proj_id}")
+                    else:
+                        print(f"Project '{parsed['project']}' could not be resolved")
 
-            headers = {
-                "Authorization": f"Bearer {TODOIST_TOKEN}",
-                "Content-Type": "application/json"
-            }
-            r = await client.post("https://api.todoist.com/rest/v2/tasks", json=payload, headers=headers)
-            if r.status_code in [200, 204]:
-                task_data = r.json()
-                results.append({
-                    "task": parsed["content"],
-                    "project": parsed["project"],
-                    "priority": parsed["priority"],
-                    "url": task_data.get("url", ""),
-                    "status": "success"
-                })
-            else:
-                results.append({
-                    "task": parsed["content"],
-                    "status": "error",
-                    "todoist_response": r.text
-                })
+                headers = {
+                    "Authorization": f"Bearer {TODOIST_TOKEN}",
+                    "Content-Type": "application/json"
+                }
+                print("Sending task payload:", payload)
+                r = await client.post("https://api.todoist.com/rest/v2/tasks", json=payload, headers=headers)
+                print("Task creation response:", r.status_code, r.text)
+                if r.status_code in [200, 204]:
+                    task_data = r.json()
+                    results.append({
+                        "task": parsed["content"],
+                        "project": parsed["project"],
+                        "priority": parsed["priority"],
+                        "url": task_data.get("url", ""),
+                        "status": "success"
+                    })
+                else:
+                    results.append({
+                        "task": parsed["content"],
+                        "status": "error",
+                        "todoist_response": r.text
+                    })
 
-    return {"added_tasks": results}
+        return {"added_tasks": results}
+    except Exception as e:
+        print("Fatal error in /from_chatgpt:", e)
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
